@@ -10,10 +10,12 @@ import matplotlib.cm as mplcm
 import sys
 from glob import glob
 import xarray as xr
-from matplotlib.colors import BoundaryNorm
 import metpy
 import re
 from datetime import datetime
+import requests
+import bz2
+from multiprocessing import Pool, cpu_count
 
 import warnings
 warnings.filterwarnings(
@@ -21,15 +23,13 @@ warnings.filterwarnings(
     message='The unit of the quantity is stripped.'
 )
 
-folder = os.environ['MODEL_DATA_FOLDER']
-input_file=folder+'ICON_*.nc' 
-folder_images = os.environ['MODEL_DATA_FOLDER']
-chunks_size = 10
-processes = int(os.environ['N_CONCUR_PROCESSES'])
+# folder = os.environ['MODEL_DATA_FOLDER']
+# folder_images = os.environ['MODEL_DATA_FOLDER']
+os.environ['HOME_FOLDER'] = os.getcwd()
 figsize_x = 10 
 figsize_y = 8
-invariant_file = folder+'icon-eu_europe_regular-lat-lon_time-invariant_HSURF.nc' 
-soil_saturation_file = os.environ['HOME_FOLDER']+'/soil_saturation.nc'
+# invariant_file = folder+'icon-eu_europe_regular-lat-lon_time-invariant_HSURF.nc' 
+# soil_saturation_file = os.environ['HOME_FOLDER']+'/soil_saturation.nc'
 
 # Options for savefig
 options_savefig = {
@@ -38,93 +38,88 @@ options_savefig = {
 }
 
 # Dictionary to map the output folder based on the projection employed
-subfolder_images = {
-    'euratl' : folder_images,
-    'it' : folder_images+'it',
-    'de' : folder_images+'de'    
-}
+# subfolder_images = {
+#     'euratl' : folder_images,
+#     'it' : folder_images+'it',
+#     'de' : folder_images+'de'    
+# }
 
-folder_glyph = os.environ['HOME_FOLDER'] + '/plotting/yrno_png/'
-WMO_GLYPH_LOOKUP_PNG = {
-        '0': '01',
-        '1': '02',
-        '2': '02',
-        '3': '04',
-        '5': '15',
-        '10': '15',
-        '14': '15',
-        '30': '15',
-        '40': '15',
-        '41': '15',
-        '42': '15',
-        '43': '15',
-        '44': '15',
-        '45': '15',
-        '46': '15',
-        '47': '15',
-        '50': '46',
-        '52': '46',
-        '53': '46',
-        '60': '09',
-        '61': '09',
-        '63': '10',
-        '64': '41',
-        '65': '12',
-        '68': '47',
-        '69': '48',
-        '70': '13',
-        '71': '49',
-        '73': '50',
-        '74': '45',
-        '75': '48',
-        '80': '05',
-        '81': '05',
-        '83': '41',
-        '84': '32',
-        '85': '08',
-        '86': '34',
-        '87': '45',
-        '89': '43',
-        '90': '30',
-        '91': '30',
-        '92': '25',
-        '93': '33',
-        '94': '34',
-        '95': '25',
-}
+# folder_glyph = os.environ['HOME_FOLDER'] + '/plotting/yrno_png/'
+# WMO_GLYPH_LOOKUP_PNG = {
+#         '0': '01',
+#         '1': '02',
+#         '2': '02',
+#         '3': '04',
+#         '5': '15',
+#         '10': '15',
+#         '14': '15',
+#         '30': '15',
+#         '40': '15',
+#         '41': '15',
+#         '42': '15',
+#         '43': '15',
+#         '44': '15',
+#         '45': '15',
+#         '46': '15',
+#         '47': '15',
+#         '50': '46',
+#         '52': '46',
+#         '53': '46',
+#         '60': '09',
+#         '61': '09',
+#         '63': '10',
+#         '64': '41',
+#         '65': '12',
+#         '68': '47',
+#         '69': '48',
+#         '70': '13',
+#         '71': '49',
+#         '73': '50',
+#         '74': '45',
+#         '75': '48',
+#         '80': '05',
+#         '81': '05',
+#         '83': '41',
+#         '84': '32',
+#         '85': '08',
+#         '86': '34',
+#         '87': '45',
+#         '89': '43',
+#         '90': '30',
+#         '91': '30',
+#         '92': '25',
+#         '93': '33',
+#         '94': '34',
+#         '95': '25',
+# }
 
 proj_defs = {
     'euratl':
     {
-        'projection': 'mill',
-        'llcrnrlon': -23.5,
-        'llcrnrlat': 29.5,
-        'urcrnrlon': 45,
-        'urcrnrlat': 70.5,
-        'resolution': 'l',
-        'epsg': 4269
+        'extents':[-23.5, 45, 29.5, 70.5],
+        'resolution': '50m',
     },
     'it':
     {
-        'projection': 'mill',
-        'llcrnrlon': 6,
-        'llcrnrlat': 36,
-        'urcrnrlon': 19,
-        'urcrnrlat': 48,
-        'resolution': 'i',
-        'epsg': 4269
+        'extents':[6, 19, 36, 48],
+        'resolution': '10m',
     },
     'de':
     {
-        'projection': 'cyl',
-        'llcrnrlon': 5,
-        'llcrnrlat': 46.5,
-        'urcrnrlon': 16,
-        'urcrnrlat': 56,
-        'resolution': 'i',
-        'epsg': 4269
+        'extents':[5, 16, 46.5, 56],
+        'resolution': '10m',
     }
 }
+
+var_2d_list = ['alb_rad','alhfl_s','ashfl_s','asob_s','asob_t','aswdifd_s','aswdifu_s',
+          'aswdir_s','athb_s','cape_con','cape_ml','clch','clcl','clcm','clct',
+          'clct_mod','cldepth','h_snow','hbas_con','htop_con','htop_dc','hzerocl',
+          'pmsl','ps','qv_2m','qv_s','rain_con','rain_gsp','relhum_2m','rho_snow',
+          'runoff_g','runoff_s','snow_con','snow_gsp','snowlmt','synmsg_bt_cl_ir10.8',
+          't_2m','t_g','t_snow','tch','tcm','td_2m','tmax_2m','tmin_2m','tot_prec',
+          'u_10m','v_10m','vmax_10m','w_snow','w_so','ww','z0']
+
+var_3d_list = ['clc','fi','omega','p','qv','relhum','t','tke','u','v','w']
 
 def get_run():
     now = datetime.now()
@@ -144,7 +139,136 @@ def get_run():
         <= utc_now):
         run="18"
     
-    return now.strftime('%Y%m%d')+run
+    return now.strftime('%Y%m%d')+run, run
+
+def find_file_name(vars_2d=None,
+                   vars_3d=None,
+                   f_times=0, 
+                   base_url = "https://opendata.dwd.de/weather/nwp",
+                   model_url = "icon-eu/grib"):
+    '''Find file names to be downloaded given input variables and
+    a forecast lead time f_time (in hours).
+    - vars_2d, a list of 2d variables to download, e.g. ['t_2m']
+    - vars_3d, a list of 3d variables to download with pressure
+      level, e.g. ['t@850','fi@500']
+    - f_times, forecast steps, e.g. 0 or list(np.arange(1, 79))
+    Note that this function WILL NOT check if the files exist on
+    the server to avoid wasting time. When they're passed
+    to the download_extract_files function if the file does not
+    exist it will simply not be downloaded.
+      '''
+    date_string, run_string = get_run()
+    if type(f_times) is not list:
+        f_times = [f_times]
+    if (vars_2d is None) and (vars_3d is None):
+        raise ValueError('You need to specify at least one 2D or one 3D variable')
+
+    if vars_2d is not None:
+        if type(vars_2d) is not list:
+            vars_2d = [vars_2d]
+    if vars_3d is not None:
+        if type(vars_3d) is not list:
+            vars_3d = [vars_3d]
+
+    urls = []
+    for f_time in f_times:
+        if vars_2d is not None:
+            for var in vars_2d:
+                if var not in var_2d_list:
+                    raise ValueError('accepted 2d variables are %s' % var_2d_list)
+                var_url="icon-eu_europe_regular-lat-lon_single-level"
+                urls.append("%s/%s/%s/%s/%s_%s_%03d_%s.grib2.bz2" % 
+                            (base_url, model_url, run_string, var,
+                              var_url, date_string, f_time, var.upper()) )
+        if vars_3d is not None:
+            for var in vars_3d:
+                var_t, plev = var.split('@')
+                if var_t not in var_3d_list:
+                    raise ValueError('accepted 3d variables are %s' % var_3d_list)
+                var_url="icon-eu_europe_regular-lat-lon_pressure-level"
+                urls.append("%s/%s/%s/%s/%s_%s_%03d_%s_%s.grib2.bz2" % 
+                            (base_url, model_url, run_string, var_t,
+                              var_url, date_string, f_time, plev, var_t.upper()) )
+
+    return urls
+
+def download_extract_files(urls):
+    '''Given a list of urls download and bunzip2 them.
+    Return a list of the path of the extracted files'''
+
+    if type(urls) is list:
+        urls_list = urls
+    else:
+        urls_list = [urls]
+
+    # We only parallelize if we have a number of files
+    # larger than the cpu count 
+    if len(urls_list) > cpu_count():    
+        pool = Pool(cpu_count())
+        results = pool.map(download_extract_url, urls_list)
+        pool.close()
+        pool.join()
+    else:
+        results = []
+        for url in urls_list:
+            results.append(download_extract_url(url))
+
+    return results
+
+def download_extract_url(url):
+    folder = '/tmp/'
+    filename = folder+os.path.basename(url).replace('.bz2','')
+
+    if os.path.exists(filename):
+        extracted_files = filename
+    else:
+        r = requests.get(url, stream=True)
+        if r.status_code == requests.codes.ok:
+            with r.raw as source, open(filename, 'wb') as dest:
+                dest.write(bz2.decompress(source.read()))
+            extracted_files = filename
+        else:
+            r.raise_for_status()
+
+    return extracted_files
+
+def get_dset(vars_2d=None, vars_3d=None, f_times=0):
+    if vars_2d is not None or vars_3d is not None:
+        urls = find_file_name(vars_2d=vars_2d,
+                              vars_3d=vars_3d,
+                              f_times=f_times)
+        fils = download_extract_files(urls)
+        # For now there is a bug with parallel=True which causes eccodes to
+        # crash so cfgrib does not produce any idx files... 
+        # see https://github.com/ecmwf/cfgrib/issues/110
+        # It will be much slower though
+        ds = xr.open_mfdataset(fils, engine='cfgrib', preprocess=preprocess,
+                  combine="by_coords", concat_dim='valid_time', parallel=False)
+
+    return ds
+
+def preprocess(ds):
+    if 'isobaricInhPa' in ds.coords.keys():
+        ds = ds.drop('isobaricInhPa')
+    if 'heightAboveGround' in ds.coords.keys():
+        ds = ds.drop('heightAboveGround')
+    # Use valid_time as coordinate so that we can 
+    # use this to concatenate afterwards
+    ds = ds.expand_dims(dim='valid_time')
+
+    return ds
+
+def read_time(dset):
+    """Read time properly (as datetime object) from dataset
+    and compute forecast lead time as cumulative hour"""
+    time = pd.to_datetime(dset.valid_time.values)
+    if len(time) > 1:
+        cum_hour = np.array((time - time[0]) /
+                            pd.Timedelta('1 hour')).astype("int")
+    else:
+        cum_hour = 0
+
+    return time, cum_hour
 
 def get_weather_icons(ww, time):
     #from matplotlib._png import read_png
@@ -177,38 +301,10 @@ def subset_arrays(arrs, proj):
     proj_options = proj_defs[proj]
     out = []
     for arr in arrs:
-        out.append(arr.metpy.sel(lat=slice(proj_options['llcrnrlat'], proj_options['urcrnrlat']),
-                            lon=slice(proj_options['llcrnrlon'], proj_options['urcrnrlon'])))
+        out.append(arr.sel(latitude=slice(proj_options['extents'][2], proj_options['extents'][3]),
+                            longitude=slice(proj_options['extents'][0], proj_options['extents'][1])))
 
     return out
-
-def read_dataset(variables = ['T_2M', 'TD_2M']):
-    """Wrapper to initialize the dataset"""
-    # Create the regex for the files with the needed variables
-    variables_search = '('+'|'.join(variables)+')'
-    # Get a list of all the files in the folder
-    # In the future we can use Run/Date to have a more selective glob pattern
-    files = glob(folder+'*.nc')
-    # find only the files with the variables that we need 
-    needed_files = [f for f in files if re.search(r'/%s(?:_\d{10})' % variables_search, f)]
-    dset = xr.open_mfdataset(needed_files, preprocess=preprocess)
-    # NOTE!! Even though we use open_mfdataset, which creates a Dask array, we then 
-    # load the dataset into memory since otherwise the object cannot be pickled by 
-    # multiprocessing
-    dset = dset.metpy.parse_cf()
-    time, cum_hour = read_time(dset)
-
-    return dset, time, cum_hour
-
-def preprocess(ds):
-    '''Additional preprocessing step to apply to the datasets'''
-    # correct gust attributes typo
-    if 'VMAX_10M' in ds.variables.keys():
-        ds['VMAX_10M'].attrs['units'] = 'm/s'
-    if 'plev_bnds' in ds.variables.keys():
-        ds = ds.drop('plev_bnds')
-
-    return ds.squeeze(drop=True)
 
 def read_time(dset):
     """Read time properly (as datetime object) from dataset
@@ -250,96 +346,51 @@ def get_city_coordinates(city):
     loc = geolocator.geocode(city)
     return(loc.longitude, loc.latitude)
 
+def get_projection_cartopy(plt, projection="euratl", regions=False, compute_projection=False):
+    '''Retrieve the projection using cartopy'''
+    print('projection = %s' % projection)
+    if compute_projection:
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+        import cartopy.io.shapereader as shpreader
 
-def get_projection(lon, lat, projection="euratl", countries=True, labels=True):
-    from mpl_toolkits.basemap import Basemap  # import Basemap matplotlib toolkit
-    """Create the projection in Basemap and returns the x, y array to use it in a plot"""
-    proj_options =proj_defs[projection]
-    m = Basemap(**proj_options)
-    if projection == "euratl":
-        if labels:
-            m.drawparallels(np.arange(-90.0, 90.0, 10.), linewidth=0.2, color='white',
-                labels=[True, False, False, True], fontsize=7)
-            m.drawmeridians(np.arange(0.0, 360.0, 10.), linewidth=0.2, color='white',
-                labels=[True, False, False, True], fontsize=7)
+        proj_opts = proj_defs[projection]
 
-    elif projection == "it":
-        m.readshapefile(os.environ['HOME_FOLDER'] + '/plotting/shapefiles/ITA_adm/ITA_adm1',
-                            'ITA_adm1',linewidth=0.2,color='black',zorder=7)
-        if labels:
-            m.drawparallels(np.arange(-90.0, 90.0, 5.), linewidth=0.2, color='white',
-                labels=[True, False, False, True], fontsize=7)
-            m.drawmeridians(np.arange(0.0, 360.0, 5.), linewidth=0.2, color='white',
-                labels=[True, False, False, True], fontsize=7)
-    elif projection == "de":
-        m.readshapefile(os.environ['HOME_FOLDER'] + '/plotting/shapefiles/DEU_adm/DEU_adm1',
-                            'DEU_adm1',linewidth=0.2,color='black',zorder=7)
-        if labels:
-            m.drawparallels(np.arange(-90.0, 90.0, 5.), linewidth=0.2, color='white',
-                labels=[True, False, False, True], fontsize=7)
-            m.drawmeridians(np.arange(0.0, 360.0, 5.), linewidth=0.2, color='white',
-                labels=[True, False, False, True], fontsize=7)
+        ax = plt.axes(projection=ccrs.PlateCarree())
 
-    m.drawcoastlines(linewidth=0.5, linestyle='solid', color='black', zorder=7)
-    if countries:
-        m.drawcountries(linewidth=0.5, linestyle='solid', color='black', zorder=7)
+        ax.set_extent(proj_opts['extents'], ccrs.PlateCarree())
+        ax.coastlines(resolution=proj_opts['resolution'])
+        ax.add_feature(cfeature.BORDERS.with_scale(proj_opts['resolution']))
 
-    x, y = m(lon,lat)
-
-    return(m, x, y)
-
-
-# def get_projection_cartopy(plt, projection="euratl"):
-#     '''Retrieve the projection using cartopy'''
-#     print('projection = %s' % projection)
-#     import cartopy.crs as ccrs
-#     import cartopy.feature as cfeature
-#     import cartopy.io.shapereader as shpreader
-
-#     # If projection is "euratl" we don't have to do anything,
-#     # the correct extents will be set automatically 
-
-#     ax = plt.axes(projection=ccrs.PlateCarree())
+        if regions:
+            states_provinces = cfeature.NaturalEarthFeature(
+                category='cultural',
+                name='admin_1_states_provinces_lines',
+                scale=proj_opts['resolution'],
+                facecolor='none')
+            ax.add_feature(states_provinces, edgecolor='black', alpha=.5)
         
-#     if projection=="it":
-#         ax.set_extent([6, 19, 36, 48], ccrs.PlateCarree())
-#         adm1_shapes = shpreader.Reader(os.environ['HOME_FOLDER'] + '/plotting/shapefiles/ITA_adm/ITA_adm1.shp').geometries()
-#         ax.add_geometries(adm1_shapes, ccrs.PlateCarree(), edgecolor="black", facecolor="None", linewidth=0.5)
-#         ax.coastlines(resolution='10m')
-#         ax.add_feature(cfeature.BORDERS.with_scale('10m'))
-#     elif projection=="de":
-#         ax.set_extent([5, 16, 46.5, 56], ccrs.PlateCarree())
-#         adm1_shapes = shpreader.Reader(os.environ['HOME_FOLDER'] + '/plotting/shapefiles/DEU_adm/DEU_adm1.shp').geometries()
-#         ax.add_geometries(adm1_shapes, ccrs.PlateCarree(), edgecolor="black", facecolor="None")
-#         ax.coastlines(resolution='10m')
-#         ax.add_feature(cfeature.BORDERS.with_scale('10m'))
-#     elif projection=="euratl":
-#         ax.coastlines(resolution='50m')
-#         ax.add_feature(cfeature.BORDERS.with_scale('50m'))
+        return(ax)
+    else:
+        return(add_background(plt, projection, image=projection+"_background.png"))
 
-#     return(ax)
+def add_background(plt, projection, image):
+    ''''Add a background image to the plot'''
+    proj_opts = proj_defs[projection]
+    extents = proj_opts['extents']
 
+    img = plt.imread(image)
+    plt.axis('off')
+    plt.imshow(img, zorder=10, extent=extents)
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
-
-
-def chunks_array(l, n):
-    """Same as 'chunks' but for the time dimension in
-    an array, and we assume that's always the first 
-    dimension for now."""
-    #ind = l.dims.index('time')
-    for i in range(0, l.shape[0], n):
-        yield l[i:i + n]
+    return plt.gca()
 
 
 # Annotation run, models 
 def annotation_run(ax, time, loc='upper right',fontsize=8):
     """Put annotation of the run obtaining it from the
     time array passed to the function."""
-    at = AnchoredText('Run %s'% time[0].strftime('%Y%m%d %H UTC'), 
+    at = AnchoredText('Run %s'% time.strftime('%Y%m%d %H UTC'), 
                        prop=dict(size=fontsize), frameon=True, loc=loc)
     at.patch.set_boxstyle("round,pad=0.,rounding_size=0.1")
     at.zorder = 10
@@ -389,7 +440,7 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=256):
 
 def get_colormap(cmap_type):
     """Create a custom colormap."""
-    colors_tuple = pd.read_csv(os.environ['HOME_FOLDER'] + '/plotting/cmap_%s.rgba' % cmap_type).values 
+    colors_tuple = pd.read_csv(os.environ['HOME_FOLDER'] + '/cmap_%s.rgba' % cmap_type).values 
     
     cmap = colors.LinearSegmentedColormap.from_list(cmap_type, colors_tuple, colors_tuple.shape[0])
     return(cmap)
@@ -411,11 +462,11 @@ def get_colormap_norm(cmap_type, levels):
         cmap, norm = from_levels_and_colors(levels, sns.color_palette('gist_stern_r', n_colors=len(levels)),
                          extend='max')
     elif cmap_type == "rain_new":
-        colors_tuple = pd.read_csv(os.environ['HOME_FOLDER'] + '/plotting/cmap_prec.rgba').values    
+        colors_tuple = pd.read_csv(os.environ['HOME_FOLDER'] + '/cmap_prec.rgba').values    
         cmap, norm = from_levels_and_colors(levels, sns.color_palette(colors_tuple, n_colors=len(levels)),
                          extend='max')
     elif cmap_type == "winds":
-        colors_tuple = pd.read_csv(os.environ['HOME_FOLDER'] + '/plotting/cmap_winds.rgba').values    
+        colors_tuple = pd.read_csv(os.environ['HOME_FOLDER'] + '/cmap_winds.rgba').values    
         cmap, norm = from_levels_and_colors(levels, sns.color_palette(colors_tuple, n_colors=len(levels)),
                          extend='max')
 
@@ -467,6 +518,9 @@ def plot_maxmin_points(ax, lon, lat, data, extrema, nsize, symbol, color='k',
     if random:
         data = np.random.normal(data, 0.2)
 
+    if len(lon.shape) == 1 and len(lat.shape) == 1:
+        lon, lat = np.meshgrid(lon, lat)
+
     if (extrema == 'max'):
         data_ext = maximum_filter(data, nsize, mode='nearest')
     elif (extrema == 'min'):
@@ -486,6 +540,7 @@ def plot_maxmin_points(ax, lon, lat, data, extrema, nsize, symbol, color='k',
         texts.append( ax.text(lon[mxy[i], mxx[i]], lat[mxy[i], mxx[i]], '\n' + str(data[mxy[i], mxx[i]].astype('int')),
                 color="gray", size=10, clip_on=True, fontweight='bold',
                 horizontalalignment='center', verticalalignment='top', zorder=6) )
+
     return(texts)
 
 
