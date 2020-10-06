@@ -6,16 +6,15 @@ from matplotlib.colors import from_levels_and_colors
 import seaborn as sns
 import os
 import matplotlib.patheffects as path_effects
-import matplotlib.cm as mplcm
 import sys
-from glob import glob
 import xarray as xr
-import metpy
-import re
+# import metpy
 from datetime import datetime
 import requests
 import bz2
 from multiprocessing import Pool, cpu_count
+import base64
+
 
 import warnings
 warnings.filterwarnings(
@@ -23,13 +22,9 @@ warnings.filterwarnings(
     message='The unit of the quantity is stripped.'
 )
 
-# folder = os.environ['MODEL_DATA_FOLDER']
-# folder_images = os.environ['MODEL_DATA_FOLDER']
 os.environ['HOME_FOLDER'] = os.getcwd()
 figsize_x = 10 
 figsize_y = 8
-# invariant_file = folder+'icon-eu_europe_regular-lat-lon_time-invariant_HSURF.nc' 
-# soil_saturation_file = os.environ['HOME_FOLDER']+'/soil_saturation.nc'
 
 # Options for savefig
 options_savefig = {
@@ -37,77 +32,24 @@ options_savefig = {
     'bbox_inches':'tight'
 }
 
-# Dictionary to map the output folder based on the projection employed
-# subfolder_images = {
-#     'euratl' : folder_images,
-#     'it' : folder_images+'it',
-#     'de' : folder_images+'de'    
-# }
-
-# folder_glyph = os.environ['HOME_FOLDER'] + '/plotting/yrno_png/'
-# WMO_GLYPH_LOOKUP_PNG = {
-#         '0': '01',
-#         '1': '02',
-#         '2': '02',
-#         '3': '04',
-#         '5': '15',
-#         '10': '15',
-#         '14': '15',
-#         '30': '15',
-#         '40': '15',
-#         '41': '15',
-#         '42': '15',
-#         '43': '15',
-#         '44': '15',
-#         '45': '15',
-#         '46': '15',
-#         '47': '15',
-#         '50': '46',
-#         '52': '46',
-#         '53': '46',
-#         '60': '09',
-#         '61': '09',
-#         '63': '10',
-#         '64': '41',
-#         '65': '12',
-#         '68': '47',
-#         '69': '48',
-#         '70': '13',
-#         '71': '49',
-#         '73': '50',
-#         '74': '45',
-#         '75': '48',
-#         '80': '05',
-#         '81': '05',
-#         '83': '41',
-#         '84': '32',
-#         '85': '08',
-#         '86': '34',
-#         '87': '45',
-#         '89': '43',
-#         '90': '30',
-#         '91': '30',
-#         '92': '25',
-#         '93': '33',
-#         '94': '34',
-#         '95': '25',
-# }
-
 proj_defs = {
     'euratl':
     {
         'extents':[-23.5, 45, 29.5, 70.5],
         'resolution': '50m',
+        'regions':False
     },
     'it':
     {
         'extents':[6, 19, 36, 48],
         'resolution': '10m',
+        'regions':True
     },
     'de':
     {
         'extents':[5, 16, 46.5, 56],
         'resolution': '10m',
+        'regions':True
     }
 }
 
@@ -299,10 +241,14 @@ def subset_arrays(arrs, proj):
     """Given an input projection created with basemap or cartopy subset the input arrays 
     on the boundaries"""
     proj_options = proj_defs[proj]
-    out = []
-    for arr in arrs:
-        out.append(arr.sel(latitude=slice(proj_options['extents'][2], proj_options['extents'][3]),
-                            longitude=slice(proj_options['extents'][0], proj_options['extents'][1])))
+    if type(arrs) is list:
+        out = []
+        for arr in arrs:
+            out.append(arr.sel(latitude=slice(proj_options['extents'][2], proj_options['extents'][3]),
+                                longitude=slice(proj_options['extents'][0], proj_options['extents'][1])))
+    else:
+        out = arrs.sel(latitude=slice(proj_options['extents'][2], proj_options['extents'][3]),
+                                longitude=slice(proj_options['extents'][0], proj_options['extents'][1]))
 
     return out
 
@@ -346,9 +292,8 @@ def get_city_coordinates(city):
     loc = geolocator.geocode(city)
     return(loc.longitude, loc.latitude)
 
-def get_projection_cartopy(plt, projection="euratl", regions=False, compute_projection=False):
+def get_projection_cartopy(plt, projection="euratl", compute_projection=False):
     '''Retrieve the projection using cartopy'''
-    print('projection = %s' % projection)
     if compute_projection:
         import cartopy.crs as ccrs
         import cartopy.feature as cfeature
@@ -362,14 +307,14 @@ def get_projection_cartopy(plt, projection="euratl", regions=False, compute_proj
         ax.coastlines(resolution=proj_opts['resolution'])
         ax.add_feature(cfeature.BORDERS.with_scale(proj_opts['resolution']))
 
-        if regions:
+        if proj_opts['regions']:
             states_provinces = cfeature.NaturalEarthFeature(
                 category='cultural',
                 name='admin_1_states_provinces_lines',
                 scale=proj_opts['resolution'],
                 facecolor='none')
             ax.add_feature(states_provinces, edgecolor='black', alpha=.5)
-        
+
         return(ax)
     else:
         return(add_background(plt, projection, image=projection+"_background.png"))
@@ -385,6 +330,10 @@ def add_background(plt, projection, image):
 
     return plt.gca()
 
+def b64_image(image_filename): 
+    with open(image_filename, 'rb') as f: 
+        image = f.read() 
+        return 'data:image/png;base64,' + base64.b64encode(image).decode('utf-8')
 
 # Annotation run, models 
 def annotation_run(ax, time, loc='upper right',fontsize=8):
@@ -473,23 +422,23 @@ def get_colormap_norm(cmap_type, levels):
     return(cmap, norm)
 
 
-def remove_collections(elements):
-    """Remove the collections of an artist to clear the plot without
-    touching the background, which can then be used afterwards."""
-    for element in elements:
-        try:
-            for coll in element.collections: 
-                coll.remove()
-        except AttributeError:
-            try:
-                for coll in element:
-                    coll.remove()
-            except ValueError:
-                print_message('WARNING: Element is empty')
-            except TypeError:
-                element.remove()
-        except ValueError:
-            print_message('WARNING: Collection is empty')
+# def remove_collections(elements):
+#     """Remove the collections of an artist to clear the plot without
+#     touching the background, which can then be used afterwards."""
+#     for element in elements:
+#         try:
+#             for coll in element.collections: 
+#                 coll.remove()
+#         except AttributeError:
+#             try:
+#                 for coll in element:
+#                     coll.remove()
+#             except ValueError:
+#                 print_message('WARNING: Element is empty')
+#             except TypeError:
+#                 element.remove()
+#         except ValueError:
+#             print_message('WARNING: Collection is empty')
 
 
 def plot_maxmin_points(ax, lon, lat, data, extrema, nsize, symbol, color='k',
@@ -544,33 +493,33 @@ def plot_maxmin_points(ax, lon, lat, data, extrema, nsize, symbol, color='k',
     return(texts)
 
 
-def add_vals_on_map(ax, bmap, var, levels, density=50,
-                     cmap='rainbow', shift_x=0., shift_y=0., fontsize=8, lcolors=True):
-    '''Given an input projection, a variable containing the values and a plot put
-    the values on a map exlcuing NaNs and taking care of not going
-    outside of the map boundaries, which can happen.
-    - shift_x and shift_y apply a shifting offset to all text labels
-    - colors indicate whether the colorscale cmap should be used to map the values of the array'''
+# def add_vals_on_map(ax, bmap, var, levels, density=50,
+#                      cmap='rainbow', shift_x=0., shift_y=0., fontsize=8, lcolors=True):
+#     '''Given an input projection, a variable containing the values and a plot put
+#     the values on a map exlcuing NaNs and taking care of not going
+#     outside of the map boundaries, which can happen.
+#     - shift_x and shift_y apply a shifting offset to all text labels
+#     - colors indicate whether the colorscale cmap should be used to map the values of the array'''
 
-    norm = colors.Normalize(vmin=levels.min(), vmax=levels.max())
-    m = mplcm.ScalarMappable(norm=norm, cmap=cmap)
+#     norm = colors.Normalize(vmin=levels.min(), vmax=levels.max())
+#     m = mplcm.ScalarMappable(norm=norm, cmap=cmap)
     
-    lon_min, lon_max, lat_min, lat_max = bmap.llcrnrlon, bmap.urcrnrlon, bmap.llcrnrlat, bmap.urcrnrlat
+#     lon_min, lon_max, lat_min, lat_max = bmap.llcrnrlon, bmap.urcrnrlon, bmap.llcrnrlat, bmap.urcrnrlat
 
-    # Remove values outside of the extents
-    var = var.sel(lat=slice(lat_min+0.15, lat_max-0.15), lon=slice(lon_min+0.15, lon_max-0.15))[::density, ::density]
-    lons = var.lon
-    lats = var.lat
+#     # Remove values outside of the extents
+#     var = var.sel(lat=slice(lat_min+0.15, lat_max-0.15), lon=slice(lon_min+0.15, lon_max-0.15))[::density, ::density]
+#     lons = var.lon
+#     lats = var.lat
 
-    at = []
-    for ilat, ilon in np.ndindex(var.shape):
-        if lcolors:
-            at.append(ax.annotate(('%d'%var[ilat, ilon]), (lons[ilon]+shift_x, lats[ilat]+shift_y),
-                             color = m.to_rgba(float(var[ilat, ilon])), weight='bold', fontsize=fontsize,
-                              path_effects=[path_effects.withStroke(linewidth=1, foreground="black")], zorder=5))
-        else:
-            at.append(ax.annotate(('%d'%var[ilat, ilon]), (lons[i]+shift_x, lats[i]+shift_y),
-                             color = 'white', weight='bold', fontsize=fontsize,
-                              path_effects=[path_effects.withStroke(linewidth=1, foreground="black")], zorder=5))
+#     at = []
+#     for ilat, ilon in np.ndindex(var.shape):
+#         if lcolors:
+#             at.append(ax.annotate(('%d'%var[ilat, ilon]), (lons[ilon]+shift_x, lats[ilat]+shift_y),
+#                              color = m.to_rgba(float(var[ilat, ilon])), weight='bold', fontsize=fontsize,
+#                               path_effects=[path_effects.withStroke(linewidth=1, foreground="black")], zorder=5))
+#         else:
+#             at.append(ax.annotate(('%d'%var[ilat, ilon]), (lons[i]+shift_x, lats[i]+shift_y),
+#                              color = 'white', weight='bold', fontsize=fontsize,
+#                               path_effects=[path_effects.withStroke(linewidth=1, foreground="black")], zorder=5))
 
-    return at
+#     return at

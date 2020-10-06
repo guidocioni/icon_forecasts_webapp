@@ -1,3 +1,5 @@
+import matplotlib
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import xarray as xr
 import metpy.calc as mpcalc
@@ -11,6 +13,7 @@ import os
 from utils import *
 import sys
 from matplotlib.colors import BoundaryNorm
+
 
 # The one employed for the figure name when exported
 variable_name = 'gph_t_850'
@@ -27,12 +30,10 @@ dset = get_dset(vars_3d=['t@850','fi@500']).squeeze()
 time = pd.to_datetime(dset.valid_time.values)
 cum_hour = dset.step.values.astype(int)
 
-# Select 850 hPa level using metpy
-temp_850 = dset['t']
-temp_850.metpy.convert_units('degC')
+temp_850 = dset['t'] - 273.15
 z_500 = dset['z']
 gph_500 = mpcalc.geopotential_to_height(z_500)
-gph_500 = xr.DataArray(gph_500, coords=z_500.coords,
+gph_500 = xr.DataArray(gph_500.magnitude, coords=z_500.coords,
                        attrs={'standard_name': 'geopotential height',
                               'units': gph_500.units})
 
