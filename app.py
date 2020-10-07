@@ -49,8 +49,8 @@ def update_figure(chart, f_step, projection):
   if os.path.exists(filename):
     out = b64_image(filename)
   else:
-    filename_fig = plot_var(f_step, projection)
-    assert filename_fig == filename, "Mismatching filename strings!"
+    filename_fig = plot_vars(f_step, projection, load_all=False)
+    assert filename_fig == filename, "Mismatching filename strings! From plot_vars:%s , defined:%s" % (filename_fig, filename)
     out = b64_image(filename_fig)
 
   return out
@@ -68,7 +68,7 @@ def update_output(n_clicks, chart, projection):
       if all(test_filenames): # means the files already exist
         return None
       else:
-        none = plot_vars(projection)
+        none = plot_vars(f_steps, projection, load_all=True)
         return None
 
 if __name__ == '__main__':
