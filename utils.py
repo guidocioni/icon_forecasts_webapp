@@ -14,6 +14,7 @@ import requests
 import bz2
 from multiprocessing import Pool, cpu_count
 import base64
+import cfgrib
 
 
 import warnings
@@ -174,18 +175,30 @@ def download_extract_url(url):
 
     return extracted_files
 
-def get_dset(vars_2d=None, vars_3d=None, f_times=0):
-    if vars_2d is not None or vars_3d is not None:
+def get_dset(vars_2d=[], vars_3d=[], f_times=0):
+    if vars_2d or vars_3d:
+        date_string, _ = get_run()
         urls = find_file_name(vars_2d=vars_2d,
                               vars_3d=vars_3d,
                               f_times=f_times)
         fils = download_extract_files(urls)
-        # For now there is a bug with parallel=True which causes eccodes to
-        # crash so cfgrib does not produce any idx files... 
-        # see https://github.com/ecmwf/cfgrib/issues/110
-        # It will be much slower though
-        ds = xr.open_mfdataset(fils, engine='cfgrib', preprocess=preprocess,
-                  combine="by_coords", concat_dim='valid_time', parallel=False)
+        # We cat the files on Linux and read the resulting grib, this is much
+        # much faster!! But it will not work everywhere 
+        if (type(fils) is list and len(fils) > 3): # multiple files extractor
+            merged_file = '/tmp/'+date_string + '_' + '_'.join(vars_3d+vars_2d) +'.grib2'
+            
+            if os.path.exists(merged_file) == False:
+                os.system('cat %s > %s' % (' '.join(fils), merged_file) )
+            
+            dss = cfgrib.open_datasets(merged_file)
+
+            for i,_ in enumerate(dss):
+                dss[i] = preprocess(dss[i])
+            ds = xr.merge(dss)
+
+        else:
+            ds = xr.open_mfdataset(fils, engine='cfgrib', preprocess=preprocess,
+                  combine="by_coords", concat_dim='step', parallel=False)
 
     return ds
 
@@ -196,7 +209,8 @@ def preprocess(ds):
         ds = ds.drop('heightAboveGround')
     # Use valid_time as coordinate so that we can 
     # use this to concatenate afterwards
-    ds = ds.expand_dims(dim='valid_time')
+    if 'step' not in ds.dims.keys():
+        ds = ds.expand_dims(dim='step')
 
     return ds
 
