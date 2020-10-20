@@ -15,7 +15,6 @@ projection_options = [{'label':'Euro-Atlantic region', 'value':'euratl'},
                       {'label':'Germany', 'value':'de'}]
 steps = list(range(0, 79)) + list(range(81, 121, 3))
 image_filename = 'euratl_background.png'
-run_string, _ = get_run()
 #
 
 app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
@@ -44,6 +43,8 @@ app.layout = html.Div([
     Output('image_plt', 'src'),
     [Input('chart-dropdown', 'value'), Input('slider-step', 'value'), Input('proj-dropdown', 'value')])
 def update_figure(chart, f_step, projection):
+  run_string, _ = get_run()
+
   filename = '/tmp/' + projection + '_' + chart + '_%s_%03d.png' % (run_string, f_step)
 
   if os.path.exists(filename):
@@ -60,6 +61,8 @@ def update_figure(chart, f_step, projection):
     [Input('preload','n_clicks')],
     state=[State('chart-dropdown', 'value'), State('proj-dropdown', 'value')])
 def update_output(n_clicks, chart, projection):
+    run_string, _ = get_run()
+
     if n_clicks > 1:
       f_steps = list(range(0, 79)) + list(range(81, 121, 3))
       filenames = ['/tmp/' + projection + '_' + chart + '_%s_%03d.png' % (run_string, f_step) for f_step in f_steps]
