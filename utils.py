@@ -171,7 +171,7 @@ def download_extract_url(url):
                 dest.write(bz2.decompress(source.read()))
             extracted_files = filename
         else:
-            r.raise_for_status()
+            return None
 
     return extracted_files
 

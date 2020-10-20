@@ -17,7 +17,7 @@ steps = list(range(0, 79)) + list(range(81, 121, 3))
 image_filename = 'euratl_background.png'
 #
 
-app = dash.Dash(__name__, external_stylesheets=external_stylesheets)
+app = dash.Dash(__name__, external_stylesheets=external_stylesheets, url_base_pathname='/icon-eu/')
 server = app.server
 
 app.layout = html.Div([
